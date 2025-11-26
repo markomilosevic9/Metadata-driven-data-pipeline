@@ -1,0 +1,292 @@
+services: 
+  # minio 
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: minio
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - motor_policy_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # setup buckets for minio      
+  minio-bucket-setup:
+    image: minio/mc
+    container_name: minio-bucket-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for MinIO to start...' &&
+      sleep 5 &&
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+      mc mb -p myminio/input-data &&
+      mc mb -p myminio/motor-policy-ok &&
+      mc mb -p myminio/motor-policy-ko &&
+      mc mb -p myminio/spark-logs &&
+      mc mb -p myminio/spark-logs/spark-events &&
+      mc mb -p myminio/pipeline-logs &&
+      mc anonymous set public myminio/input-data &&
+      mc anonymous set public myminio/motor-policy-ok &&
+      mc anonymous set public myminio/motor-policy-ko &&
+      mc anonymous set public myminio/spark-logs &&
+      mc anonymous set public myminio/pipeline-logs &&
+      echo 'Buckets created successfully' &&
+      exit 0
+      "
+    volumes:
+      - ./:/opt/motor-policy
+    networks:
+      - motor_policy_net
+
+  # spark master
+  spark-master:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=${SPARK_MASTER_HOST:-spark-master}
+      - SPARK_MASTER_PORT=${SPARK_MASTER_PORT:-7077}
+      - SPARK_MASTER_WEBUI_PORT=${SPARK_MASTER_WEBUI_PORT:-8081}
+    ports:
+      - "${SPARK_MASTER_WEBUI_PORT:-8081}:8081"
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+    networks:
+      - motor_policy_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # spark workers
+  spark-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST:-spark-master}:${SPARK_MASTER_PORT:-7077}
+      - SPARK_WORKER_MEMORY=4G
+      - SPARK_WORKER_CORES=2
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    ports:
+      - "8082:8081"
+    networks:
+      - motor_policy_net
+  spark-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST:-spark-master}:${SPARK_MASTER_PORT:-7077}
+      - SPARK_WORKER_MEMORY=4G
+      - SPARK_WORKER_CORES=2
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    ports:
+      - "8083:8081"
+    networks:
+      - motor_policy_net
+
+  # spark client
+  spark-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-client
+    hostname: spark-client
+    environment:
+      - SPARK_MODE=client
+      - HOME=/opt/motor-policy
+      - PYTHONPATH=/opt/motor-policy/pipeline:/opt/motor-policy/utils
+      - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST:-spark-master}:${SPARK_MASTER_PORT:-7077}
+    user: root
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./:/opt/motor-policy
+    ports:
+      - "4040:4040"
+    networks:
+      - motor_policy_net
+    command: ["tail", "-f", "/dev/null"]
+
+  # spark history
+  spark-history:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark-history
+    hostname: spark-history
+    environment:
+      - SPARK_MODE=history
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=s3a://spark-logs/spark-events -Dspark.hadoop.fs.s3a.access.key=${MINIO_ROOT_USER} -Dspark.hadoop.fs.s3a.secret.key=${MINIO_ROOT_PASSWORD} -Dspark.hadoop.fs.s3a.endpoint=http://minio:9000 -Dspark.hadoop.fs.s3a.path.style.access=true -Dspark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem -Dspark.hadoop.fs.s3a.connection.ssl.enabled=false -Dspark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+      - HOME=/opt/motor-policy
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - "18080:18080"
+    networks:
+      - motor_policy_net
+
+  # postgres for ariflow metadata DB
+  postgres:
+    image: postgres:14
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: ${AIRFLOW_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - motor_policy_net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # airflow init
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_POSTGRES_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/${AIRFLOW_POSTGRES_DB}
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./:/opt/motor-policy
+    networks:
+      - motor_policy_net
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db init
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@admin.com || true
+        
+        # Create Spark connection
+        airflow connections delete spark_default 2>/dev/null || true
+        airflow connections add spark_default \
+          --conn-type spark \
+          --conn-host ${SPARK_MASTER_HOST} \
+          --conn-port ${SPARK_MASTER_PORT} \
+          --conn-extra '{"queue": "root.default", "deploy-mode": "cluster"}'
+        
+        echo "airflow init done"
+
+  # airflow webserver
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_POSTGRES_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/${AIRFLOW_POSTGRES_DB}
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}
+      - PYTHONPATH=/opt/motor-policy:/opt/motor-policy/utils
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./:/opt/motor-policy
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    networks:
+      - motor_policy_net
+    user: root
+    command: airflow webserver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # airflow scheduler
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-scheduler
+    depends_on:
+      airflow-webserver:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_POSTGRES_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/${AIRFLOW_POSTGRES_DB}
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}
+      - PYTHONPATH=/opt/motor-policy:/opt/motor-policy/utils
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./:/opt/motor-policy
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - motor_policy_net
+    user: root
+    command: airflow scheduler
+
+volumes:
+  minio_data:
+  postgres_data:
+
+networks:
+  motor_policy_net:
+    driver: bridge

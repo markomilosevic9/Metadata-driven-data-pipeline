@@ -1,0 +1,9 @@
+pyspark
+pyarrow
+minio
+boto3
+python-dotenv
+pandas
+pytest
+pytest-cov
+pyyaml

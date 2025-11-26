@@ -1,0 +1,60 @@
+# pipeline config
+# application-level settings
+# Environment variables override defaults using ${VAR_NAME:-default} syntax
+
+# spark
+spark:
+  master_url: "spark://spark-master:7077"
+  app_name: "MotorPolicyPipeline"
+  deploy_mode: "client"
+  
+  # JARs required for minio/s3a connectivity
+  jars:
+    - "/opt/spark/jars/hadoop-aws-3.3.4.jar"
+    - "/opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar"
+  
+  # additional config for spark
+  conf:
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+
+# minio config
+storage:
+  endpoint: "http://minio:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  secure: false
+  
+  # buckets
+  buckets:
+    input: "input-data"
+    output_ok: "motor-policy-ok"
+    output_ko: "motor-policy-ko"
+    spark_logs: "spark-logs"
+    pipeline_logs: "pipeline-logs"
+
+# pipeline config
+pipeline:
+  metadata_path: "config/metadata_motor.json"
+  
+  # data generation 
+  data_generation:
+    total_records: 100000
+    input_bucket: "input-data"
+    input_object: "input.jsonl"
+    seed: 42  # seed for reproducible dataset
+
+# testing config
+testing:
+  spark_master: "spark://spark-master:7077"
+  markers:
+    pre_pipeline: "not post_pipeline"
+    post_pipeline: "post_pipeline"
+
+# logging config
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# environment 
+environment: "development"

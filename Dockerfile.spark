@@ -1,0 +1,48 @@
+# official Apache Spark image, bitnami is gone from hub
+FROM apache/spark:3.5.0-python3
+
+USER root
+
+# install additional packages
+RUN apt-get update && \
+    apt-get install -y wget curl iputils-ping netcat-openbsd ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# spark env variables
+ENV SPARK_HOME=/opt/spark
+ENV SPARK_JARS_DIR=$SPARK_HOME/jars
+ENV PYSPARK_PYTHON=python3
+ENV PATH=$SPARK_HOME/bin:$PATH
+
+# get required JARs for s3a/minio
+RUN wget -q -P $SPARK_JARS_DIR https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+    wget -q -P $SPARK_JARS_DIR https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+
+# set wd
+WORKDIR /opt/motor-policy
+
+# copy and install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# copy spark config
+COPY config/spark-defaults.conf $SPARK_HOME/conf/spark-defaults.conf
+
+# copy project files
+COPY . .
+
+# set permissions
+RUN chmod -R 755 /opt/motor-policy
+
+# entrypoint: decide role based on SPARK_MODE env variable
+CMD ["bash", "-c", "\
+if [ \"$SPARK_MODE\" = \"master\" ]; then \
+  /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --host $SPARK_MASTER_HOST --port $SPARK_MASTER_PORT --webui-port $SPARK_MASTER_WEBUI_PORT; \
+elif [ \"$SPARK_MODE\" = \"worker\" ]; then \
+  /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker $SPARK_MASTER_URL; \
+elif [ \"$SPARK_MODE\" = \"history\" ]; then \
+  /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer; \
+else \
+  tail -f /dev/null; \
+fi"]

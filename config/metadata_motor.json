@@ -1,0 +1,81 @@
+{
+  "dataflows": [
+    {
+      "name": "motor-ingestion",
+      "sources": [
+        {
+          "name": "policy_inputs",
+          "path": "s3a://input-data/input*.jsonl",
+          "format": "json",
+          "options": {"multiLine": false}
+        }
+      ],
+      "transformations": [
+        {
+          "name": "validation",
+          "type": "validate_fields",
+          "params": {
+            "input": "policy_inputs",
+            "validations": [
+              {
+                "field": "plate_number",
+                "rules": [
+                  "notNull",
+                  "notEmpty",
+                  {"name": "regex", "params": "^[A-Z0-9-]+$"}
+                ]
+              },
+              {
+                "field": "driver_age",
+                "rules": [
+                  "notNull",
+                  {"name": "minValue", "params": 18}
+                ]
+              },
+              {
+                "field": "policy_number",
+                "rules": ["notNull"]
+              }
+            ]
+          }
+        },
+        {
+          "name": "add_ingestion_dt_ok",
+          "type": "add_fields",
+          "params": {
+            "input": "validation_ok",
+            "addFields": [
+              {"name": "ingestion_dt", "function": "current_timestamp"}
+            ]
+          }
+        },
+        {
+          "name": "add_ingestion_dt_ko",
+          "type": "add_fields",
+          "params": {
+            "input": "validation_ko",
+            "addFields": [
+              {"name": "ingestion_dt", "function": "current_timestamp"}
+            ]
+          }
+        }
+      ],
+      "sinks": [
+        {
+          "input": "add_ingestion_dt_ok",
+          "name": "raw-ok",
+          "path": "s3a://motor-policy-ok/output",
+          "format": "json",
+          "saveMode": "overwrite"
+        },
+        {
+          "input": "add_ingestion_dt_ko",
+          "name": "raw-ko",
+          "path": "s3a://motor-policy-ko/output",
+          "format": "json",
+          "saveMode": "overwrite"
+        }
+      ]
+    }
+  ]
+}
