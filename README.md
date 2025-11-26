@@ -57,7 +57,8 @@ The pipeline relies entirely on a metadata.json file, which is used to generate 
 
 # Workflow overview
 
-<img width="940" height="445" alt="image" src="https://github.com/user-attachments/assets/2dfce5ed-4abb-4bbd-ba5e-7eae17882efc" />
+<img width="1253" height="593" alt="workflow" src="https://github.com/user-attachments/assets/c83964c1-4668-459b-ac6b-becccd96fe28" />
+
 
 ## Data sample generation
 The data sample is produced by a Python script and contains 100 000 rows stored in a .jsonl file. It simulates motor policy data with three fields: policy_number, driver_age, and plate_number. The data sample is intentionally made reproducible with deterministic random seed so every run generates identical output.
