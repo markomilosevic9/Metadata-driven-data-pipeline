@@ -124,12 +124,10 @@ Configuration files for Spark and the overall pipeline are included. The first d
 After downloading the repo, note that a Makefile is provided for convenience.
 
 Running the following commands will set up the project easily:
-`make build`
-`make up` 
+`make build` and `make up` 
 
 Alternatively, you can achieve the same setup using:
-`docker-compose build`
-`docker-compose up -d` 
+`docker-compose build` and `docker-compose up -d` 
 
 Web interfaces are accessible as follows:
 
