@@ -121,7 +121,7 @@ Configuration files for Spark and the overall pipeline are included. The first d
 
 # Cloning the project
 
-After downloading the repo, note that a Makefile is provided for convenience.
+After cloning/downloading the repo, note that a Makefile is provided for convenience.
 
 Running the following commands will set up the project easily:
 `make build` and `make up` 
