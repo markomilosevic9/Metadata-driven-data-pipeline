@@ -71,7 +71,7 @@ A few details:
 Also, this step initializes a JSON log structure stored in `pipeline-logs`. It represents a lightweight solution for simple logging, improving observability by providing an easily readable overview of pipeline execution. Spark and Airflow logs, on the other hand, are more useful for debugging.
 
 ## Object storage
-<img width="800" height="400" alt="image" src="https://github.com/user-attachments/assets/ea230c53-e7d7-4fff-9d88-fdbedb263c55" />
+<img width="1012" height="485" alt="object-storage" src="https://github.com/user-attachments/assets/8f19a183-00c9-4be3-8a19-f02d0e707a17" />
 
 MinIO is used as the object storage. After project setup, five required buckets are created: `input-data`, `motor-policy-ok`, `motor-policy-ko`, `spark-logs` and `pipeline-logs`.
 
@@ -109,13 +109,14 @@ PyTest hooks handles logging for described testing suites.
 The pipeline relies on a set of Docker containers that provide all required services, including Spark, Airflow (with its metadata DB), and MinIO. Spark and Airflow each have dedicated Dockerfiles, while the general environment (volumes, networks, service config etc.) is defined in the `docker-compose.yml` file.
 
 ## Workflow orchestration 
-<img width="1019" height="281" alt="image" src="https://github.com/user-attachments/assets/778763c8-ef8b-49cf-a864-ba1872761d42" />
+<img width="1019" height="281" alt="workflow" src="https://github.com/user-attachments/assets/ca5e9968-06e9-4ea4-b3ca-c8e768f59914" />
 
 Apache Airflow manages scheduling and orchestration through a simple DAG. Each pipeline run begins with an initialization step that creates a temporary `.run-id` file, which is then used by all subsequent stages. A cleanup step is executed at the end of the workflow.
 
+<img width="1903" height="685" alt="dag" src="https://github.com/user-attachments/assets/d46001fe-24b8-4075-a6be-a575ef89eb33" />
+
 The DAG includes PythonOperators and BashOperators, depending on the each stage. Sample data generation runs as a pure Python script, while tests and the main pipeline are executed via Spark. So, BashOperator is used to submit commands to the Spark, including those required for running the test suite.
 
-<img width="1902" height="653" alt="image" src="https://github.com/user-attachments/assets/56669519-1d0c-4ef6-8a66-6b8460e32868" />
 
 ## Other details
 Configuration files for Spark and the overall pipeline are included. The first defines parameters such as MinIO connection details and Spark memory settings, while the later stores configuration for storage/buckets, testing, logging, JARs etc. A separate .env file contains the credentials and secrets required for MinIO, Spark, Airflow, and other services included in the project.
