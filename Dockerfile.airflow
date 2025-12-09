@@ -2,13 +2,19 @@ FROM apache/airflow:2.8.1-python3.11
 
 USER root
 
-# dependencies
+# (os) dependencies + docker cli
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     openjdk-17-jdk \
     curl \
+    gnupg \
+    lsb-release \
     netcat-openbsd \
     sudo && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +27,7 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 USER airflow
 
-# install necessary py libraries
+# install necessary python libraries
 RUN pip install --no-cache-dir \
     apache-airflow-providers-apache-spark==4.7.1 \
     pyspark==3.5.0 \
@@ -29,6 +35,8 @@ RUN pip install --no-cache-dir \
     minio \
     boto3 \
     pytest \
-    pytest-cov
+    pytest-cov \
+    pyyaml
 
+# set wd
 WORKDIR /opt/airflow

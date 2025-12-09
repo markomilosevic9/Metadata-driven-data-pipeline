@@ -4,19 +4,17 @@ import string
 from io import BytesIO
 from typing import Dict, Tuple
 from minio import Minio
-from minio.error import S3Error
 from utils.json_logger import (
     init_log_structure,
-    read_log_from_minio,
     start_stage,
     end_stage,
     upload_log_to_minio
 )
 from pipeline.config_loader import load_config, get_storage_config, get_pipeline_config, get_logging_config
 
-# generates input data sample (100k), uploads to minio, creates log structure
 
-TOTAL_RECORDS_DEFAULT = 100_000
+# generates input data sample (100k records), uploads to minio, creates log structure
+# uses config_loader for all configuration
 
 # generate plate_number in format XYZ-123 
 def generate_plate_number() -> str:
@@ -32,8 +30,8 @@ def generate_policy_number(index: int) -> str:
 def generate_driver_age() -> int:
     return random.randint(17, 80)
 
-# generate jsonl, return missing age count and empty plate count
-def generate_jsonl_and_stats(total_records: int = TOTAL_RECORDS_DEFAULT) -> Tuple[str, int, int]:
+# generate input data as jsonl, return missing age count and empty plate count
+def generate_jsonl_and_stats(total_records: int) -> Tuple[str, int, int]:
     indices = list(range(total_records))
     random.shuffle(indices)
 
@@ -66,15 +64,14 @@ def generate_jsonl_and_stats(total_records: int = TOTAL_RECORDS_DEFAULT) -> Tupl
     return content, missing_age_count, empty_plate_count
 
 # upload jsonl to minio
-def upload_jsonl_to_minio(
-    jsonl_content: str,
-    bucket: str,
-    object_name: str,
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-    secure: bool = False,
-) -> None:
+def upload_jsonl_to_minio(jsonl_content: str, 
+                          bucket: str, 
+                          object_name: str, 
+                          endpoint: str, 
+                          access_key: str, 
+                          secret_key: str, 
+                          secure: bool) -> None:
+
     client = Minio(
         endpoint=endpoint,
         access_key=access_key,
@@ -94,18 +91,22 @@ def upload_jsonl_to_minio(
         content_type="application/json",
     )
 
-# generates data, handles logging, actually 1st script in the pipeline so it creates the log structure, gets run_id for logging
+# generates data, handles logging
+# actually 1st script in the pipeline so it creates the log structure, gets run_id for logging
 def main(run_id: str = None):
-    # load config
+    # load all configs
     config = load_config()
     data_gen_config = get_pipeline_config(config).get('data_generation', {})
     storage_config = get_storage_config(config)
     logging_config = get_logging_config(config)
     
-    # get settings
-    total_records = data_gen_config.get('total_records', TOTAL_RECORDS_DEFAULT)
+    # get settings from config
+    total_records = data_gen_config.get('total_records', 100000)
     input_bucket = data_gen_config.get('input_bucket', 'input-data')
     input_object = data_gen_config.get('input_object', 'input.jsonl')
+    seed = data_gen_config.get('seed', 42)
+    
+    # extract endpoint 
     endpoint = storage_config['endpoint'].replace('http://', '').replace('https://', '')
     
     # init logging if run_id provided
@@ -113,17 +114,13 @@ def main(run_id: str = None):
     stage = None
     
     if run_id:
-        # try to read existing log / since does not exist - create new
-        try:
-            log_structure = read_log_from_minio(run_id, **logging_config)
-        except:
-            log_structure = init_log_structure(run_id)
-        
+        # first script in pipeline, so always creates new log structure
+        log_structure = init_log_structure(run_id)
         stage = start_stage(log_structure, "data_generation")
     
     try:
-        # deterministic output, thus fixed seed
-        random.seed(data_gen_config.get('seed', 42))
+        # seed for reproducible output
+        random.seed(seed)
         
         # generate data
         jsonl_content, missing_age_count, empty_plate_count = generate_jsonl_and_stats(total_records)
@@ -148,13 +145,13 @@ def main(run_id: str = None):
                 output_bucket=input_bucket,
                 output_object=input_object
             )
-            upload_log_to_minio(log_structure, **logging_config)
+            upload_log_to_minio(log_structure, logging_config)
 
     except Exception as e:
         # log failure
         if stage:
             end_stage(stage, status="failed", error_message=str(e))
-            upload_log_to_minio(log_structure, **logging_config)
+            upload_log_to_minio(log_structure, logging_config)
         raise
 
 
