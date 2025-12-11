@@ -35,7 +35,7 @@ dag = DAG(
     'motor_policy_pipeline',
     default_args=default_args,
     description='DAG for pipeline',
-    schedule_interval=None,  # or '@hourly' - it is just a demo
+    schedule_interval=None,  # or '@hourly' it is just a demo
     catchup=False,
     max_active_runs=1,
     is_paused_upon_creation=False,
@@ -94,7 +94,7 @@ pre_pipeline_tests = BashOperator(
 )
 
 
-# core Spark pipeline
+# core spark pipeline
 # build spark-submit command (with JARs and configuration details from config)
 jars_list = ','.join(spark_config.get('jars', []))
 

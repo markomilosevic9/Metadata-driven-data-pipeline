@@ -18,7 +18,6 @@ from pipeline.config_loader import (
 
 # spark session configured and used by post-pipeline tests (when reading output data)
 # event logging disabled for tests, they only require minio/s3a access for reading/writing, not for spark event history
-# in runner script, event logging remains enabled via spark-defaults.conf and credentials are passed via --conf flags in the DAG
 @pytest.fixture(scope="session")
 def spark():
     # get config

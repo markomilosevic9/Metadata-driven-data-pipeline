@@ -35,12 +35,16 @@ services:
       mc mb -p myminio/input-data &&
       mc mb -p myminio/motor-policy-ok &&
       mc mb -p myminio/motor-policy-ko &&
+      mc mb -p myminio/motor-policy-ok-consolidated &&
+      mc mb -p myminio/pipeline-state &&
       mc mb -p myminio/spark-logs &&
       mc mb -p myminio/spark-logs/spark-events &&
       mc mb -p myminio/pipeline-logs &&
       mc anonymous set public myminio/input-data &&
       mc anonymous set public myminio/motor-policy-ok &&
       mc anonymous set public myminio/motor-policy-ko &&
+      mc anonymous set public myminio/motor-policy-ok-consolidated &&
+      mc anonymous set public myminio/pipeline-state &&
       mc anonymous set public myminio/spark-logs &&
       mc anonymous set public myminio/pipeline-logs &&
       echo 'Buckets created successfully' &&
