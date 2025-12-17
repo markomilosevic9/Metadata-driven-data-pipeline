@@ -1,4 +1,4 @@
-# official Apache Spark image, bitnami is gone from hub
+# official apache spark image, bitnami is gone from hub
 FROM apache/spark:3.5.0-python3
 
 USER root

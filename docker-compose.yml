@@ -63,6 +63,11 @@ services:
       - SPARK_MASTER_HOST=${SPARK_MASTER_HOST:-spark-master}
       - SPARK_MASTER_PORT=${SPARK_MASTER_PORT:-7077}
       - SPARK_MASTER_WEBUI_PORT=${SPARK_MASTER_WEBUI_PORT:-8081}
+      # pass minio credentials to spark env
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
     ports:
       - "${SPARK_MASTER_WEBUI_PORT:-8081}:8081"
       - "${SPARK_MASTER_PORT:-7077}:7077"
@@ -86,6 +91,11 @@ services:
       - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST:-spark-master}:${SPARK_MASTER_PORT:-7077}
       - SPARK_WORKER_MEMORY=4G
       - SPARK_WORKER_CORES=2
+      # pass minio credentials to spark env
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
     depends_on:
       spark-master:
         condition: service_healthy
@@ -93,6 +103,7 @@ services:
       - "8082:8081"
     networks:
       - motor_policy_net
+      
   spark-worker-2:
     build:
       context: .
@@ -104,6 +115,11 @@ services:
       - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST:-spark-master}:${SPARK_MASTER_PORT:-7077}
       - SPARK_WORKER_MEMORY=4G
       - SPARK_WORKER_CORES=2
+      # pass minio credentials to spark env
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
     depends_on:
       spark-master:
         condition: service_healthy
@@ -124,6 +140,14 @@ services:
       - HOME=/opt/motor-policy
       - PYTHONPATH=/opt/motor-policy/pipeline:/opt/motor-policy/utils
       - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST:-spark-master}:${SPARK_MASTER_PORT:-7077}
+      # pass all env variables needed by config_loader
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - SPARK_MASTER_HOST=${SPARK_MASTER_HOST}
+      - SPARK_MASTER_PORT=${SPARK_MASTER_PORT}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     user: root
     depends_on:
       spark-master:
@@ -157,7 +181,7 @@ services:
     networks:
       - motor_policy_net
 
-  # postgres for ariflow metadata DB
+  # postgres for airflow metadata DB
   postgres:
     image: postgres:14
     container_name: airflow-postgres
@@ -190,6 +214,14 @@ services:
       - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY}
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      # pass env variables for config_loader
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - SPARK_MASTER_HOST=${SPARK_MASTER_HOST}
+      - SPARK_MASTER_PORT=${SPARK_MASTER_PORT}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -239,6 +271,14 @@ services:
       - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
       - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}
       - PYTHONPATH=/opt/motor-policy:/opt/motor-policy/utils
+      # pass env variables for config_loader
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - SPARK_MASTER_HOST=${SPARK_MASTER_HOST}
+      - SPARK_MASTER_PORT=${SPARK_MASTER_PORT}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -273,6 +313,14 @@ services:
       - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
       - SPARK_MASTER_URL=spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}
       - PYTHONPATH=/opt/motor-policy:/opt/motor-policy/utils
+      # pass env variables for config_loader
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - SPARK_MASTER_HOST=${SPARK_MASTER_HOST}
+      - SPARK_MASTER_PORT=${SPARK_MASTER_PORT}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs

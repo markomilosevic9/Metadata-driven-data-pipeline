@@ -7,6 +7,39 @@
           "name": "policy_inputs",
           "path": "s3a://input-data/input*.jsonl",
           "format": "json",
+          "required": true,
+          "schema": {
+            "type": "struct",
+            "fields": [
+              {
+                "name": "policy_number",
+                "type": "string",
+                "nullable": false,
+                "metadata": {
+                  "description": "Unique policy identifier"
+                }
+              },
+              {
+                "name": "driver_age",
+                "type": "integer",
+                "nullable": true,
+                "metadata": {
+                  "description": "Driver age in years"
+                }
+              },
+              {
+                "name": "plate_number",
+                "type": "string",
+                "nullable": false,
+                "metadata": {
+                  "description": "Vehicle plate number"
+                }
+              }
+            ]
+          },
+          "schema_enforcement": {
+            "enabled": true
+          },
           "options": {"multiLine": false}
         }
       ],

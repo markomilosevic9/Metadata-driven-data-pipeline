@@ -3,19 +3,20 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
-from pipeline.config_loader import load_config, get_spark_config
+from pipeline.config_loader import load_config, get_spark_config, get_storage_config
 
-# DAG
+
+# DAG 
 # aim is clean orchestration/scheduling only
 # airflow orchestrates while each script handles its own logging
-# 1st script creates log, last script finalizes it
 
 
 # get config
 config = load_config()
 spark_config = get_spark_config(config)
+storage_config = get_storage_config(config)
 
-# get values
+# get values 
 PROJECT_ROOT = "/opt/motor-policy"
 SPARK_MASTER = spark_config['master_url']
 SPARK_CLIENT_CONTAINER = "spark-client"
@@ -34,15 +35,14 @@ dag = DAG(
     'motor_policy_pipeline',
     default_args=default_args,
     description='DAG for pipeline',
-    schedule_interval=None, # or '@hourly' - it is just a demo
+    schedule_interval=None,  # or '@hourly' - it is just a demo
     catchup=False,
-    max_active_runs=1, 
+    max_active_runs=1,
     is_paused_upon_creation=False,
 )
 
-
 # init run_id (for coordination)
-# generate it and save for all subsequent tasks
+# generates it and save for all subsequent tasks
 def create_run_id(**context):
     exec_date = context['execution_date']
     run_id = f"run_{exec_date.strftime('%Y-%m-%d_%H%M%S')}"
@@ -53,22 +53,24 @@ def create_run_id(**context):
     
     return run_id
 
+
 init_run = PythonOperator(
     task_id='init_run_id',
     python_callable=create_run_id,
     dag=dag,
 )
 
-# generate sample data, creates log, logs itself
+# generate sample data, upload to minio, creates log, logs itself
 def generate_sample_data_task(**context):
     from generate_sample_data import main
     
-    # get run_id 
+    # get run_id
     with open(f'{PROJECT_ROOT}/.run_id', 'r') as f:
         run_id = f.read().strip()
     
     # script creates log structure and handles everything
     main(run_id=run_id)
+
 
 generate_data = PythonOperator(
     task_id='generate_sample_data',
@@ -76,7 +78,8 @@ generate_data = PythonOperator(
     dag=dag,
 )
 
-# pre-pipeline pytest suite 
+
+# pre-pipeline pytest suite
 pre_pipeline_tests = BashOperator(
     task_id='pre_pipeline_tests',
     bash_command=(
@@ -91,25 +94,39 @@ pre_pipeline_tests = BashOperator(
 )
 
 
-# core spark pipeline
+# core Spark pipeline
+# build spark-submit command (with JARs and configuration details from config)
 jars_list = ','.join(spark_config.get('jars', []))
+
+# build spark config from storage_config
+spark_conf_options = [
+    f"--conf spark.hadoop.fs.s3a.access.key={storage_config['access_key']}",
+    f"--conf spark.hadoop.fs.s3a.secret.key={storage_config['secret_key']}",
+    f"--conf spark.hadoop.fs.s3a.endpoint={storage_config['endpoint']}",
+    f"--conf spark.hadoop.fs.s3a.path.style.access={str(storage_config.get('path_style_access', True)).lower()}",
+    f"--conf spark.hadoop.fs.s3a.connection.ssl.enabled={str(storage_config.get('secure', False)).lower()}",
+]
+
 run_pipeline = BashOperator(
     task_id='run_spark_pipeline',
     bash_command=(
         f'docker exec {SPARK_CLIENT_CONTAINER} bash -c "'
         f'cd {PROJECT_ROOT} && '
         f'export RUN_ID=$(cat {PROJECT_ROOT}/.run_id) && '
+        f'export PYTHONPATH={PROJECT_ROOT} && '
         f'spark-submit '
         f'--master {SPARK_MASTER} '
         f'--deploy-mode client '
         f'--jars {jars_list} '
+        f'{" ".join(spark_conf_options)} '
         f'pipeline/runner.py'
         '"'
     ),
     dag=dag,
 )
 
-# post-pipeline pytest suite 
+
+# post-pipeline pytest suite
 post_pipeline_tests = BashOperator(
     task_id='post_pipeline_tests',
     bash_command=(
@@ -124,13 +141,15 @@ post_pipeline_tests = BashOperator(
     dag=dag,
 )
 
+
 # always clean-up run_id
 cleanup_run_id = BashOperator(
     task_id='cleanup_run_id',
     bash_command=f'docker exec {SPARK_CLIENT_CONTAINER} rm -f {PROJECT_ROOT}/.run_id',
-    trigger_rule=TriggerRule.ALL_DONE,  
+    trigger_rule=TriggerRule.ALL_DONE,
     dag=dag,
 )
+
 
 # dependency chain
 (

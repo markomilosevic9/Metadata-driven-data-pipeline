@@ -1,13 +1,63 @@
+from typing import Callable, Dict
+
+
 # validator module
+# validates records according to rules from metadata
+
+# rule registry, all validation rules are defined here
+
+# generate sql for notNull validation
+def _notNull_rule(field: str) -> str:
+    return f"CASE WHEN {field} IS NULL THEN 'notNull' END"
+
+# generate sql for notEmpty validation
+def _notEmpty_rule(field: str) -> str:
+    return (
+        f"CASE WHEN {field} IS NOT NULL AND "
+        f"trim(CAST({field} AS STRING)) = '' "
+        f"THEN 'notEmpty' END"
+    )
+
+# generate sql for regex validation
+def _regex_rule(field: str, pattern: str) -> str:
+    # escape single quotes for sql
+    safe_pattern = str(pattern).replace("'", "''")
+    return (
+        f"CASE WHEN {field} IS NOT NULL AND "
+        f"NOT regexp_like(CAST({field} AS STRING), '{safe_pattern}') "
+        f"THEN 'regex: {safe_pattern}' END"
+    )
+
+# generate sql for minVaue validation
+def _minValue_rule(field: str, min_val) -> str:
+    return (
+        f"CASE WHEN {field} IS NOT NULL AND "
+        f"CAST({field} AS DOUBLE) < {min_val} "
+        f"THEN 'minValue: {min_val}' END"
+    )
+
+
+# simple rules, no params
+SIMPLE_RULES: Dict[str, Callable[[str], str]] = {
+    "notNull": _notNull_rule,
+    "notEmpty": _notEmpty_rule,
+}
+
+# parameterized rules, require params 
+PARAMETERIZED_RULES: Dict[str, Callable[[str, any], str]] = {
+    "regex": _regex_rule,
+    "minValue": _minValue_rule,
+}
+
+
+# validation: sql generation
 
 # generates sparksql expressions that collect all validation failures per field
-# for each validation config it generates expression that produces a `<field>_error` column of type array<string> or null
-# if the field is missing from json schema entirely: (array('fieldMissing') AS <field>_error)
-# if the field exists: collects all failing rule names into array (e.g. ['notNull', 'minValue: 18']); returns null if no rules fail for that field
-
-# gets list of validation configs from metadata, df columns 
+# for each validation config it generates expression that produces a `<field>_error` column 
+# gets list of validation configs from metadata, list of column names in df
 # returns list of sparksql expressions
-def generate_validation_sql(validations, df_columns):
+# raises ValueError if meets unsupported validation rule
+def generate_validation_sql(validations: list, df_columns: list) -> list:
     sql_exprs = []
 
     for v in validations:
@@ -16,7 +66,7 @@ def generate_validation_sql(validations, df_columns):
 
         # handle completely missing fields
         if field not in df_columns:
-            # if column not present at all, always error with 'fieldMissing'
+             # if column not present at all, always error with 'fieldMissing'
             sql_exprs.append(f"array('fieldMissing') AS {field}_error")
             continue
 
@@ -24,65 +74,39 @@ def generate_validation_sql(validations, df_columns):
 
         for rule in rules:
             if isinstance(rule, str):
-                # simple string rules
-                if rule == "notNull":
-                    conditions.append(
-                        f"CASE WHEN {field} IS NULL THEN 'notNull' END"
-                    )
-
-                elif rule == "notEmpty":
-                    # check for empty/whitespace string, distinct from NULL
-                    conditions.append(
-                        f"CASE WHEN {field} IS NOT NULL AND "
-                        f"trim(CAST({field} AS STRING)) = '' "
-                        f"THEN 'notEmpty' END"
-                    )
-
+                # simple string rules mentioned above
+                if rule in SIMPLE_RULES:
+                    conditions.append(SIMPLE_RULES[rule](field))
                 else:
-                    # only support notNull / notEmpty as simple rules for demo
+                    supported_simple = sorted(SIMPLE_RULES.keys())
                     raise ValueError(
-                        f"Unsupported validation rule for field '{field}': '{rule}'"
+                        f"Unsupported validation rule for field '{field}': '{rule}'. "
+                        f"Supported rules: {supported_simple}"
                     )
 
             elif isinstance(rule, dict):
-                # rules with parameters
-                rule_name = rule["name"]
+                 # parametrized rules mentioned above
+                rule_name = rule.get("name")
                 rule_params = rule.get("params")
 
-                if rule_name == "regex":
-                    # escape single quotes for sql (double them)
-                    safe_pattern = str(rule_params).replace("'", "''")
-
-                    conditions.append(
-                        f"CASE WHEN {field} IS NOT NULL AND "
-                        f"NOT regexp_like(CAST({field} AS STRING), '{safe_pattern}') "
-                        f"THEN 'regex: {safe_pattern}' END"
-                    )
-
-                elif rule_name == "minValue":
-                    conditions.append(
-                        f"CASE WHEN {field} IS NOT NULL AND "
-                        f"CAST({field} AS DOUBLE) < {rule_params} "
-                        f"THEN 'minValue: {rule_params}' END"
-                    )
-
+                if rule_name in PARAMETERIZED_RULES:
+                    conditions.append(PARAMETERIZED_RULES[rule_name](field, rule_params))
                 else:
-                    # drop any unused/unsupported types like max value, length or whatever
+                    supported_parameterized = sorted(PARAMETERIZED_RULES.keys())
                     raise ValueError(
-                        f"Unsupported validation rule for field '{field}': '{rule_name}'"
+                        f"Unsupported validation rule for field '{field}': '{rule_name}'. "
+                        f"Supported rules: {supported_parameterized}"
                     )
             else:
                 raise ValueError(
-                    f"Invalid validation rule configuration for field '{field}': {rule}"
+                    f"Invalid validation rule configuration for field '{field}': {rule}. "
                 )
 
         if not conditions:
-            # if no usable conditions then no validation; always NULL error column
             sql_exprs.append(f"CAST(NULL AS array<string>) AS {field}_error")
             continue
 
-        # build array of rule results, remove nulls with array_compact
-        # then return null if empty using nullif
+        # build array of rule results, remove nulls, return null if empty
         array_expr = f"array({', '.join(conditions)})"
         sql_expr = f"nullif(array_compact({array_expr}), array()) AS {field}_error"
 
@@ -91,11 +115,13 @@ def generate_validation_sql(validations, df_columns):
     return sql_exprs
 
 
-# execute validation on input view
-# reads input temp view, applies validation rules, splits into OK or KO dfs according to these rules
+# execute validation on input field
+
+# reads input temp view, applies validation rules, splits into OK or KO dfs 
+# gets spark session, input view/name of temp view to validate, list of validation configs from metadata
 # returns (as tuple):
-# df with valid records (df_ok)
-# df with invalid records (df_ko); includes validation_errors
+# df with valid records (df_ok); no validation_errors column
+# df with invalid records (df_ko); includes validation_errors map
 # ok count / number of valid records (ok_count)
 # ko count / number of invalid records (ko_count)
 # total count of processed records (total_count)
@@ -141,9 +167,9 @@ def execute_validation(spark, input_view: str, validations: list) -> tuple:
 
     # make OK df for records without validation errors
     df_ok = spark.sql(f"""
-                        SELECT {', '.join(original_columns)}
-                        FROM validated 
-                        WHERE NOT ({error_condition})
+                       SELECT {', '.join(original_columns)}
+                       FROM validated 
+                       WHERE NOT ({error_condition})
                        """)
 
     # get counts

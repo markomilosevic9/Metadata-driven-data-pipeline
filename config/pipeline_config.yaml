@@ -1,10 +1,10 @@
 # pipeline config
-# application-level settings
-# Environment variables override defaults using ${VAR_NAME:-default} syntax
+# application-level settings that should remain consistent
+# references environment variables using ${VAR_NAME} syntax
 
 # spark
 spark:
-  master_url: "spark://spark-master:7077"
+  master_url: "spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}"
   app_name: "MotorPolicyPipeline"
   deploy_mode: "client"
   
@@ -20,12 +20,13 @@ spark:
 
 # minio config
 storage:
-  endpoint: "http://minio:9000"
-  access_key: "minioadmin"
-  secret_key: "minioadmin"
-  secure: false
+  endpoint: "http://${MINIO_ENDPOINT}"
+  access_key: "${MINIO_ROOT_USER}"
+  secret_key: "${MINIO_ROOT_PASSWORD}"
+  secure: ${MINIO_SECURE}
+  path_style_access: true
   
-  # buckets
+  # minio buckets, logically follows structure of pipeline
   buckets:
     input: "input-data"
     output_ok: "motor-policy-ok"
@@ -37,16 +38,16 @@ storage:
 pipeline:
   metadata_path: "config/metadata_motor.json"
   
-  # data generation 
+  # data generation
   data_generation:
     total_records: 100000
     input_bucket: "input-data"
     input_object: "input.jsonl"
-    seed: 42  # seed for reproducible dataset
+    seed: 42 # seed for reproducible dataset
 
 # testing config
 testing:
-  spark_master: "spark://spark-master:7077"
+  spark_master: "spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}"
   markers:
     pre_pipeline: "not post_pipeline"
     post_pipeline: "post_pipeline"
@@ -55,6 +56,6 @@ testing:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-# environment 
-environment: "development"
+
+# environment
+environment: "${ENVIRONMENT}"
