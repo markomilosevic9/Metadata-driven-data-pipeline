@@ -114,8 +114,11 @@ def main(run_id: str = None):
     stage = None
     
     if run_id:
-        # first script in pipeline, so always creates new log structure
-        log_structure = init_log_structure(run_id)
+        # try to read existing log / since does not exist - create new
+        log_structure = read_log_from_minio(run_id, **logging_config)
+        if log_structure is None:
+            log_structure = init_log_structure(run_id)
+        
         stage = start_stage(log_structure, "data_generation")
     
     try:
@@ -156,4 +159,5 @@ def main(run_id: str = None):
 
 
 if __name__ == "__main__":
+
     main()

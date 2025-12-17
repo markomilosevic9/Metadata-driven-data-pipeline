@@ -40,3 +40,6 @@ RUN pip install --no-cache-dir \
 
 # set wd
 WORKDIR /opt/airflow
+
+# make /opt/motor-policy importable
+ENV PYTHONPATH="/opt/motor-policy:${PYTHONPATH}"
