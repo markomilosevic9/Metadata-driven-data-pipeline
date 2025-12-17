@@ -61,6 +61,55 @@ def test_dataflow_has_required_sections():
             f"sinks must be a list in dataflow '{flow_name}'"
 
 
+# incremental mode checks
+
+# check if metadata has processing_mode field for incremental processing
+def test_metadata_has_processing_mode():
+    metadata = _load_metadata()
+    
+    assert "processing_mode" in metadata, \
+        "Metadata missing 'processing_mode' field. Required for incremental processing."
+    
+    processing_mode = metadata["processing_mode"]
+    assert processing_mode in ["incremental", "full"], \
+        f"processing_mode must be 'incremental' or 'full', got: {processing_mode}"
+
+# check if metadata has batch_config section for incremental mode
+def test_metadata_has_batch_config():
+    metadata = _load_metadata()
+    
+    processing_mode = metadata.get("processing_mode")
+    
+    if processing_mode == "incremental":
+        assert "batch_config" in metadata, \
+            "Metadata missing 'batch_config' section. Required when processing_mode is 'incremental'."
+        
+        batch_config = metadata["batch_config"]
+        assert "input_pattern" in batch_config, \
+            "batch_config missing 'input_pattern' field"
+        assert "date_format" in batch_config, \
+            "batch_config missing 'date_format' field"
+        
+        # check if input_pattern contains {date} placeholder
+        input_pattern = batch_config["input_pattern"]
+        assert "{date}" in input_pattern, \
+            f"input_pattern must contain '{{date}}' placeholder, got: {input_pattern}"
+
+# check if metadata has consolidation config
+def test_metadata_has_consolidation_config():
+    metadata = _load_metadata()
+    
+    processing_mode = metadata.get("processing_mode")
+    
+    if processing_mode == "incremental":
+        assert "consolidation" in metadata, \
+            "Metadata missing 'consolidation' section. Required for incremental processing."
+        
+        consolidation = metadata["consolidation"]
+        assert "enabled" in consolidation, \
+            "consolidation missing 'enabled' field"
+
+
 # source completeness tests
 
 # check if all sources have required fields: name, path, format and if paths are non-empty or incorrectly formatted
@@ -130,5 +179,3 @@ def test_sinks_have_required_fields():
             assert path, f"Sink '{sink_name}' has empty path"
             assert path.startswith("s3a://"), \
                 f"Sink path must start with 's3a://', got: {path}"
-
-

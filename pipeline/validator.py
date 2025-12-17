@@ -4,7 +4,24 @@ from typing import Callable, Dict
 # validator module
 # validates records according to rules from metadata
 
-# rule registry, all validation rules are defined here
+# currently supported validation rules are simple rules - without parameters and parametrized rules - require parameters
+
+# simple rules: 
+# a) nutNull - field must not be null
+# b) not Empty - field must not be empty string after trimming
+
+# parametrized rules:
+# a) regex - field must match regex pattern 
+# b) minValue - field must be >= minimum value / numeric comparison
+
+# for multiple rules per field, rules are evaluated independently and all failures are collected
+# if a field is completely missing, validator automatically returns fieldMissing (without evaluating other rules)
+
+# OK records / valid records have no validation_errors column
+# KO records / invalid records have validation_errors map<string, array<string>> containing field [errors]
+
+# rule registry and all validation rules are defined here
+
 
 # generate sql for notNull validation
 def _notNull_rule(field: str) -> str:
@@ -53,7 +70,7 @@ PARAMETERIZED_RULES: Dict[str, Callable[[str, any], str]] = {
 # validation: sql generation
 
 # generates sparksql expressions that collect all validation failures per field
-# for each validation config it generates expression that produces a `<field>_error` column 
+# for each validation config it generates expression that produces a <field>_error column 
 # gets list of validation configs from metadata, list of column names in df
 # returns list of sparksql expressions
 # raises ValueError if meets unsupported validation rule
@@ -115,7 +132,7 @@ def generate_validation_sql(validations: list, df_columns: list) -> list:
     return sql_exprs
 
 
-# execute validation on input field
+# execute validation 
 
 # reads input temp view, applies validation rules, splits into OK or KO dfs 
 # gets spark session, input view/name of temp view to validate, list of validation configs from metadata

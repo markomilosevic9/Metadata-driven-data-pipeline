@@ -6,7 +6,6 @@
 spark:
   master_url: "spark://${SPARK_MASTER_HOST}:${SPARK_MASTER_PORT}"
   app_name: "MotorPolicyPipeline"
-  deploy_mode: "client"
   
   # JARs required for minio/s3a connectivity
   jars:
@@ -31,19 +30,40 @@ storage:
     input: "input-data"
     output_ok: "motor-policy-ok"
     output_ko: "motor-policy-ko"
+    output_ok_consolidated: "motor-policy-ok-consolidated"
     spark_logs: "spark-logs"
     pipeline_logs: "pipeline-logs"
+    pipeline_state: "pipeline-state"
 
 # pipeline config
 pipeline:
   metadata_path: "config/metadata_motor.json"
+  processing_mode: "incremental"
+  
+  # manifest configuration, used for tracking processed batches
+  manifest:
+    bucket: "pipeline-state"
+    object_name: "motor-policy-manifest.json"
+  
+  # batch discovery settings
+  batch_discovery:
+    input_bucket: "input-data"
+    batch_prefix: "batch-"
+    date_format: "%Y-%m-%d"
   
   # data generation
   data_generation:
     total_records: 100000
     input_bucket: "input-data"
-    input_object: "input.jsonl"
     seed: 42 # seed for reproducible dataset
+    
+    # batch configuration
+    num_batches: 3
+    batch_dates:
+      - "2025-12-01"
+      - "2025-12-02"
+      - "2025-12-03"
+    batch3_reuse_percentage: 0.2  # 20% of batch 3 records are valid records from batch 1
 
 # testing config
 testing:

@@ -33,6 +33,8 @@ def test_required_buckets_exist(minio_client):
         buckets_config.get('input', 'input-data'),
         buckets_config.get('output_ok', 'motor-policy-ok'),
         buckets_config.get('output_ko', 'motor-policy-ko'),
+        buckets_config.get('output_ok_consolidated', 'motor-policy-ok-consolidated'),
+        buckets_config.get('pipeline_state', 'pipeline-state'),
         buckets_config.get('pipeline_logs', 'pipeline-logs')
     ]
     
@@ -64,84 +66,117 @@ def test_spark_connectivity(spark):
     assert spark is not None, "Spark session could not be created"
 
 
+# manifest tests (incremental mode)
+
+# check if manifest bucket exists for state tracking
+def test_manifest_bucket_exists(minio_client):
+    config = load_config()
+    storage_config = get_storage_config(config)
+    manifest_bucket = storage_config.get('buckets', {}).get('pipeline_state', 'pipeline-state')
+    
+    try:
+        existing_buckets = {bucket.name for bucket in minio_client.list_buckets()}
+        assert manifest_bucket in existing_buckets, \
+            f"Manifest bucket '{manifest_bucket}' does not exist. Required for incremental processing."
+    except S3Error as e:
+        pytest.fail(f"Error checking manifest bucket: {e}")
+
+
+# batch discovery tests
+
+# check if batch folders exist in input bucket
+def test_batch_folders_exist(minio_client):
+    config = load_config()
+    storage_config = get_storage_config(config)
+    input_bucket = storage_config.get('buckets', {}).get('input', 'input-data')
+    
+    try:
+        # list objects in input bucket
+        objects = list(minio_client.list_objects(input_bucket, prefix='batch-', recursive=False))
+        
+        assert len(objects) > 0, \
+            f"No batch folders found in '{input_bucket}'."
+        
+        # check if objects are folders (end with /)
+        batch_folders = [obj.object_name for obj in objects if obj.object_name.endswith('/')]
+        assert len(batch_folders) > 0, \
+            f"Found objects but no batch folders in '{input_bucket}'. Objects: {[obj.object_name for obj in objects]}"
+    
+    except S3Error as e:
+        pytest.fail(f"Error listing batch folders: {e}")
+
+
 # input data tests
 
-# extract input path from metadata
-def _get_input_path_from_metadata():
-    metadata_path = Path("config/metadata_motor.json")
-    with open(metadata_path, 'r') as f:
-        metadata = json.load(f)
-    
-    sources = metadata["dataflows"][0]["sources"]
-    return sources[0]["path"]
-
-# parse minio/s3a path into bucket and prefix components
-def _parse_s3_path(s3_path: str) -> tuple:
-    path_parts = s3_path.replace("s3a://", "").split("/", 1)
-    bucket = path_parts[0]
-    prefix_pattern = path_parts[1] if len(path_parts) > 1 else ""
-    
-    # get prefix
-    if "*" in prefix_pattern:
-        prefix = prefix_pattern.split("*")[0]
-    else:
-        prefix = prefix_pattern
-    
-    return bucket, prefix
-
-# list objects within minio bucket
-def _list_input_objects(minio_client, bucket: str, prefix: str) -> list:
-    try:
-        return list(minio_client.list_objects(bucket, prefix=prefix, recursive=False))
-    except S3Error as e:
-        if e.code == "NoSuchBucket":
-            pytest.fail(f"Input bucket '{bucket}' does not exist")
-        else:
-            pytest.fail(f"Error accessing input bucket '{bucket}': {e}")
-
-# check if input file exists at expected location, if it is empy and if it is valid json
+# check if input files exist in batch folders and are valid json
 def test_input_data_exists_and_valid(minio_client):
-    input_path = _get_input_path_from_metadata()
-    bucket, prefix = _parse_s3_path(input_path)
+    config = load_config()
+    storage_config = get_storage_config(config)
+    input_bucket = storage_config.get('buckets', {}).get('input', 'input-data')
     
-    # get objects matching input path
-    objects = _list_input_objects(minio_client, bucket, prefix)
-    
-    # check if files exist
-    assert len(objects) > 0, \
-        f"No input files found at '{input_path}'. " \
-        f"Searched bucket '{bucket}' with prefix '{prefix}'. " \
-        f"Data generation step may have failed."
-    
-    # check if files are not empty
-    empty_files = [obj.object_name for obj in objects if obj.size == 0]
-    assert not empty_files, \
-        f"Found empty input files: {empty_files}. " \
-        f"Data generation may be incomplete."
-    
-    # check if files are valid json 
-    for obj in objects:
-        # only check for json/jsonl files
-        if not (obj.object_name.endswith('.json') or obj.object_name.endswith('.jsonl')):
-            continue
+    try:
+        # list all batch folders
+        batch_folders = [
+            obj.object_name for obj in minio_client.list_objects(input_bucket, prefix='batch-', recursive=False)
+            if obj.object_name.endswith('/')
+        ]
         
-        try:
-            # get 1KB to check json validity
-            response = minio_client.get_object(bucket, obj.object_name)
-            first_chunk = response.read(1024).decode('utf-8')
-            response.close()
-            response.release_conn()
+        assert len(batch_folders) > 0, \
+            f"No batch folders found in '{input_bucket}'."
+        
+        total_files_found = 0
+        
+        for batch_folder in batch_folders:
+            # list files within each batch folder
+            batch_objects = list(minio_client.list_objects(input_bucket, prefix=batch_folder, recursive=True))
             
-            # try to parse 1st line as json
-            first_line = first_chunk.split('\n')[0].strip()
-            if first_line:
-                json.loads(first_line)
+            # filter for actual files (not folders)
+            batch_files = [obj for obj in batch_objects if not obj.object_name.endswith('/')]
+            
+            # check if batch has files
+            if len(batch_files) == 0:
+                pytest.fail(
+                    f"Batch folder '{batch_folder}' is empty. "
+                    f"Expected input files like 'input.jsonl'."
+                )
+            
+            total_files_found += len(batch_files)
+            
+            # check if files are not empty and valid JSON
+            for obj in batch_files:
+                # skip non-json files
+                if not (obj.object_name.endswith('.json') or obj.object_name.endswith('.jsonl')):
+                    continue
+                
+                # check file size
+                if obj.size == 0:
+                    pytest.fail(
+                        f"File '{obj.object_name}' in batch '{batch_folder}' is empty. "
+                        f"Data generation may be incomplete."
+                    )
+                
+                # validate json format
+                try:
+                    response = minio_client.get_object(input_bucket, obj.object_name)
+                    first_chunk = response.read(1024).decode('utf-8')
+                    response.close()
+                    response.release_conn()
+                    
+                    # try to parse 1st line as json
+                    first_line = first_chunk.split('\n')[0].strip()
+                    if first_line:
+                        json.loads(first_line)
+                
+                except json.JSONDecodeError:
+                    pytest.fail(
+                        f"File '{obj.object_name}' is not valid JSON. "
+                    )
+                
+                except Exception as e:
+                    pytest.fail(f"Error reading file '{obj.object_name}': {e}")
         
-        except json.JSONDecodeError:
-            pytest.fail(
-                f"File '{obj.object_name}' is not valid JSON. "
-                f"Data generation may have produced corrupted output."
-            )
-        
-        except Exception as e:
-            pytest.fail(f"Error reading file '{obj.object_name}': {e}")
+        assert total_files_found > 0, \
+            f"No input files found in any batch folders."
+    
+    except S3Error as e:
+        pytest.fail(f"Error accessing input data: {e}")

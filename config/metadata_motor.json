@@ -1,11 +1,21 @@
 {
+  "processing_mode": "incremental",
+  "batch_config": {
+    "input_pattern": "s3a://input-data/batch-{date}/input*.jsonl",
+    "date_format": "%Y-%m-%d",
+    "batch_metadata_columns": [
+      "source_batch",
+      "batch_date",
+      "processed_run_id"
+    ]
+  },
   "dataflows": [
     {
       "name": "motor-ingestion",
       "sources": [
         {
           "name": "policy_inputs",
-          "path": "s3a://input-data/input*.jsonl",
+          "path": "s3a://input-data/batch-{date}/input*.jsonl",
           "format": "json",
           "required": true,
           "schema": {
@@ -45,10 +55,22 @@
       ],
       "transformations": [
         {
+          "name": "add_batch_metadata",
+          "type": "add_fields",
+          "params": {
+            "input": "policy_inputs",
+            "addFields": [
+              {"name": "source_batch", "function": "batch_id"},
+              {"name": "batch_date", "function": "batch_date"},
+              {"name": "processed_run_id", "function": "run_id"}
+            ]
+          }
+        },
+        {
           "name": "validation",
           "type": "validate_fields",
           "params": {
-            "input": "policy_inputs",
+            "input": "add_batch_metadata",
             "validations": [
               {
                 "field": "plate_number",
@@ -97,18 +119,31 @@
         {
           "input": "add_ingestion_dt_ok",
           "name": "raw-ok",
-          "path": "s3a://motor-policy-ok/output",
+          "path": "s3a://motor-policy-ok/batch-{date}/output",
           "format": "json",
           "saveMode": "overwrite"
         },
         {
           "input": "add_ingestion_dt_ko",
           "name": "raw-ko",
-          "path": "s3a://motor-policy-ko/output",
+          "path": "s3a://motor-policy-ko/batch-{date}/output",
           "format": "json",
           "saveMode": "overwrite"
         }
       ]
     }
-  ]
+  ],
+  "consolidation": {
+    "enabled": true,
+    "ok_records": {
+      "input_pattern": "s3a://motor-policy-ok/batch-*/output/*.json",
+      "output_path": "s3a://motor-policy-ok-consolidated/output",
+      "deduplication": {
+        "enabled": true,
+        "key_column": "policy_number",
+        "order_by": "batch_date",
+        "order_direction": "DESC"
+      }
+    }
+  }
 }

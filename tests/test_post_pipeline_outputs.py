@@ -7,9 +7,9 @@ from pipeline.config_loader import load_config, get_storage_config
 # checks if pipeline execution produced expected outputs with correct structure
 
 
-# checks if pipeline produced outputs in both OK and KO buckets, while checking basic execution success
+# checks if pipeline produced outputs in both OK and KO buckets per-batch folders
 @pytest.mark.post_pipeline
-def test_pipeline_outputs_exist(spark):
+def test_pipeline_batch_outputs_exist(spark):
     config = load_config()
     storage_config = get_storage_config(config)
     buckets = storage_config.get('buckets', {})
@@ -17,10 +17,10 @@ def test_pipeline_outputs_exist(spark):
     ok_bucket = buckets.get('output_ok', 'motor-policy-ok')
     ko_bucket = buckets.get('output_ko', 'motor-policy-ko')
     
-    ok_path = f"s3a://{ok_bucket}/output"
-    ko_path = f"s3a://{ko_bucket}/output"
+    # read outputs from all batch folders 
+    ok_path = f"s3a://{ok_bucket}/batch-*/output/*.json"
+    ko_path = f"s3a://{ko_bucket}/batch-*/output/*.json"
     
-    # read outputs
     df_ok = spark.read.format("json").option("mode", "PERMISSIVE").load(ok_path)
     df_ko = spark.read.format("json").option("mode", "PERMISSIVE").load(ko_path)
     
@@ -31,7 +31,22 @@ def test_pipeline_outputs_exist(spark):
     assert ok_count > 0, "OK bucket is empty - no valid records produced"
     assert ko_count > 0, "KO bucket is empty - no invalid records captured"
 
-# check the count - if there is data loss or duplication (input = OK + KO)
+# check if consolidated output exists
+@pytest.mark.post_pipeline
+def test_consolidated_output_exists(spark):
+    config = load_config()
+    storage_config = get_storage_config(config)
+    buckets = storage_config.get('buckets', {})
+    
+    consolidated_bucket = buckets.get('output_ok_consolidated', 'motor-policy-ok-consolidated')
+    consolidated_path = f"s3a://{consolidated_bucket}/output/*.json"
+    
+    df_consolidated = spark.read.format("json").option("mode", "PERMISSIVE").load(consolidated_path)
+    consolidated_count = df_consolidated.count()
+    
+    assert consolidated_count > 0, "Consolidated bucket is empty, consolidation may have failed"
+
+# check the count - if there is data loss or duplication (input = OK + KO across all batches)
 # check if each input record was processed and routed to exactly one output
 @pytest.mark.post_pipeline
 def test_record_counts_correct(spark):
@@ -43,11 +58,11 @@ def test_record_counts_correct(spark):
     ok_bucket = buckets.get('output_ok', 'motor-policy-ok')
     ko_bucket = buckets.get('output_ko', 'motor-policy-ko')
     
-    input_path = f"s3a://{input_bucket}/input*.jsonl"
-    ok_path = f"s3a://{ok_bucket}/output"
-    ko_path = f"s3a://{ko_bucket}/output"
+    # read all batches 
+    input_path = f"s3a://{input_bucket}/batch-*/input*.jsonl"
+    ok_path = f"s3a://{ok_bucket}/batch-*/output/*.json"
+    ko_path = f"s3a://{ko_bucket}/batch-*/output/*.json"
     
-    # reads data
     df_input = spark.read.format("json").option("mode", "PERMISSIVE").load(input_path)
     df_ok = spark.read.format("json").option("mode", "PERMISSIVE").load(ok_path)
     df_ko = spark.read.format("json").option("mode", "PERMISSIVE").load(ko_path)
@@ -74,8 +89,8 @@ def test_output_schema_correctness(spark):
     ok_bucket = buckets.get('output_ok', 'motor-policy-ok')
     ko_bucket = buckets.get('output_ko', 'motor-policy-ko')
     
-    ok_path = f"s3a://{ok_bucket}/output"
-    ko_path = f"s3a://{ko_bucket}/output"
+    ok_path = f"s3a://{ok_bucket}/batch-*/output/*.json"
+    ko_path = f"s3a://{ko_bucket}/batch-*/output/*.json"
     
     df_ok = spark.read.format("json").option("mode", "PERMISSIVE").load(ok_path)
     df_ko = spark.read.format("json").option("mode", "PERMISSIVE").load(ko_path)
@@ -94,10 +109,9 @@ def test_output_schema_correctness(spark):
     assert "validation_errors" in df_ko.columns, \
         "KO records missing validation_errors column - error details required"
 
-# checks if there are no duplicate policy_number in outputs
-# each input record should appear exactly once (in either OK or KO)
+# checks if batch detail columns exist in outputs
 @pytest.mark.post_pipeline
-def test_no_duplicate_records(spark):
+def test_batch_detail_columns_exist(spark):
     config = load_config()
     storage_config = get_storage_config(config)
     buckets = storage_config.get('buckets', {})
@@ -105,33 +119,68 @@ def test_no_duplicate_records(spark):
     ok_bucket = buckets.get('output_ok', 'motor-policy-ok')
     ko_bucket = buckets.get('output_ko', 'motor-policy-ko')
     
-    ok_path = f"s3a://{ok_bucket}/output"
-    ko_path = f"s3a://{ko_bucket}/output"
+    ok_path = f"s3a://{ok_bucket}/batch-*/output/*.json"
+    ko_path = f"s3a://{ko_bucket}/batch-*/output/*.json"
     
     df_ok = spark.read.format("json").option("mode", "PERMISSIVE").load(ok_path)
     df_ko = spark.read.format("json").option("mode", "PERMISSIVE").load(ko_path)
     
-    # check for duplicates within OK bucket
-    ok_total = df_ok.count()
-    ok_distinct = df_ok.select("policy_number").distinct().count()
-    assert ok_total == ok_distinct, \
-        f"Found duplicate policy_numbers in OK bucket: {ok_total} records, {ok_distinct} unique"
+    # check batch detail columns in OK records
+    assert "source_batch" in df_ok.columns, "OK records missing source_batch column"
+    assert "batch_date" in df_ok.columns, "OK records missing batch_date column"
+    assert "processed_run_id" in df_ok.columns, "OK records missing processed_run_id column"
     
-    # check for duplicates within KO bucket
-    ko_total = df_ko.count()
-    ko_distinct = df_ko.select("policy_number").distinct().count()
-    assert ko_total == ko_distinct, \
-        f"Found duplicate policy_numbers in KO bucket: {ko_total} records, {ko_distinct} unique"
+    # check batch detail columns in KO records
+    assert "source_batch" in df_ko.columns, "KO records missing source_batch column"
+    assert "batch_date" in df_ko.columns, "KO records missing batch_date column"
+    assert "processed_run_id" in df_ko.columns, "KO records missing processed_run_id column"
+
+# checks if there are no duplicate policy_number in per-batch outputs
+@pytest.mark.post_pipeline
+def test_no_duplicate_records_per_batch(spark):
+    config = load_config()
+    storage_config = get_storage_config(config)
+    buckets = storage_config.get('buckets', {})
     
-    # check for records in both OK and KO (critical issue)
-    df_ok_policies = df_ok.select("policy_number").withColumnRenamed("policy_number", "policy_ok")
-    df_ko_policies = df_ko.select("policy_number").withColumnRenamed("policy_number", "policy_ko")
+    ok_bucket = buckets.get('output_ok', 'motor-policy-ok')
+    ko_bucket = buckets.get('output_ko', 'motor-policy-ko')
     
-    overlap = df_ok_policies.join(
-        df_ko_policies, 
-        df_ok_policies.policy_ok == df_ko_policies.policy_ko, 
-        "inner"
-    ).count()
+    ok_path = f"s3a://{ok_bucket}/batch-*/output/*.json"
+    ko_path = f"s3a://{ko_bucket}/batch-*/output/*.json"
     
-    assert overlap == 0, \
-        f"Found {overlap} policy_numbers in BOTH OK and KO buckets - records should be in exactly one bucket"
+    df_ok = spark.read.format("json").option("mode", "PERMISSIVE").load(ok_path)
+    df_ko = spark.read.format("json").option("mode", "PERMISSIVE").load(ko_path)
+    
+    # check for duplicates within each batch in OK bucket
+    # group by source_batch and policy_number, count occurrences
+    ok_duplicates = df_ok.groupBy("source_batch", "policy_number").count().filter(F.col("count") > 1)
+    ok_dup_count = ok_duplicates.count()
+    
+    assert ok_dup_count == 0, \
+        f"Found {ok_dup_count} duplicate policy_numbers within batches in OK bucket"
+    
+    # check for duplicates within each batch in KO bucket
+    ko_duplicates = df_ko.groupBy("source_batch", "policy_number").count().filter(F.col("count") > 1)
+    ko_dup_count = ko_duplicates.count()
+    
+    assert ko_dup_count == 0, \
+        f"Found {ko_dup_count} duplicate policy_numbers within batches in KO bucket"
+
+# check if consolidated output has no duplicates
+@pytest.mark.post_pipeline
+def test_consolidated_no_duplicates(spark):
+    config = load_config()
+    storage_config = get_storage_config(config)
+    buckets = storage_config.get('buckets', {})
+    
+    consolidated_bucket = buckets.get('output_ok_consolidated', 'motor-policy-ok-consolidated')
+    consolidated_path = f"s3a://{consolidated_bucket}/output/*.json"
+    
+    df_consolidated = spark.read.format("json").option("mode", "PERMISSIVE").load(consolidated_path)
+    
+    # check for duplicates
+    total_count = df_consolidated.count()
+    distinct_count = df_consolidated.select("policy_number").distinct().count()
+    
+    assert total_count == distinct_count, \
+        f"Found duplicate policy_numbers in consolidated output: {total_count} records, {distinct_count} unique"
